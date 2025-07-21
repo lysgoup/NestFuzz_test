@@ -804,6 +804,13 @@ void setup_dirs_fds(void) {
 #endif /* !__sun */
   }
 
+  tmp = alloc_printf("/NestFuzzer/tmp/queue");
+  if (mkdir(tmp, 0700)) PFATAL("Unable to create '%s'", tmp);
+  ck_free(tmp);
+  tmp = alloc_printf("/NestFuzzer/tmp/structure");
+  if (mkdir(tmp, 0700)) PFATAL("Unable to create '%s'", tmp);
+  ck_free(tmp);
+
   /* Queue directory for any starting & discovered paths. */
 
   tmp = alloc_printf("%s/queue", out_dir);

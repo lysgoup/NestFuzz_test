@@ -1067,17 +1067,13 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
   Offset *offset_iter;
   Constraint *cons_iter;
   u64 orig_hit_cnt, new_hit_cnt;
-  HashMap map = createHashMap(NULL, NULL);
-  out_len = len;
-  out_buf = ck_alloc(len);
+  // HashMap map = createHashMap(NULL, NULL);
   // memcpy(out_buf, buf, len);
-  tree_add_map(tree->child, map);
+  // tree_add_map(tree->child, map);
   stage_name = "reusing";
   stage_short = "reusing";
   orig_hit_cnt = queued_paths + unique_crashes;
   stage_max = 0;
-  /* Mutation enum field, repalce with legal candidates */
-  enum_iter = track->enums;
   /* TODO: avoid too much enums */
   save_enum_number = (save_enum_number + track->enum_number) / 2;
   if (save_enum_number > 512) {
@@ -1119,80 +1115,111 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
   max_iteration = max3(track->enum_number, track->length_number, track->offset_number);
 
   for(int i=0;i<max_iteration;i++){
+    out_len = len;
+    out_buf = ck_alloc(len);
     memcpy(out_buf, buf, len);
+
+    //enum replacing
+    enum_iter = track->enums;
+    u32 last_len = 0, stage_cur_byte;
+    u8 *candi_str;
     while (enum_iter != NULL) {
-      /* TODO: avoid too much enums */
       if(enum_threshold > 1 && UR(enum_threshold) != 0) {
         enum_iter = enum_iter->next;
         continue;
       }
 
-      u32 insertion_len = enum_iter->end - enum_iter->start;
-      u32 index = UR(enum_value_set->count);
-      UniqueValue *cur = enum_value_set->head;
-      for (u32 i = 0; i < index && cur != NULL; i++) {
-        cur = cur->next;
-      }
+      //choose candidate randomly
+      u32 index = UR(enum_iter->cans_num / 2);
+      stage_cur_byte = enum_iter->start;
+      last_len=0;
+      candi_str = parse_candidate(enum_iter->candidates[index], &last_len);
 
-      if (!cur || cur->length != insertion_len) {
-        continue; 
+      if (stage_cur_byte < 0 || stage_cur_byte > out_len || (stage_cur_byte + last_len) > out_len) {
+        ck_free(candi_str);
+        enum_iter = enum_iter->next;
+        continue;
       }
-
-      if (enum_iter->start + insertion_len > len) {
+      if ((enum_iter->end - enum_iter->start) < last_len) {
+        ck_free(candi_str);
         enum_iter = enum_iter->next;
         continue;
       }
 
-      memcpy(out_buf + enum_iter->start, cur->data, insertion_len);
+      //little endian으로 바꿔주기
+      for (u32 i = 0; i < last_len / 2; i++) {
+        u8 tmp = candi_str[i];
+        candi_str[i] = candi_str[last_len - 1 - i];
+        candi_str[last_len - 1 - i] = tmp;
+      }
+
+      memcpy(out_buf + stage_cur_byte, candi_str, last_len);
+
+      ck_free(candi_str);
       enum_iter = enum_iter->next;
     }
 
-    length_iter = track->lengths;
-    while (length_iter != NULL) {
-      uint32_t meta_len, payload_len;
-      uint32_t start;
-      meta_len = payload_len = 0;
-
-      if (length_iter->start > out_len || length_iter->end > out_len ||
-          length_iter->target_start > out_len ||
-          length_iter->target_end > out_len) {
-        length_iter = length_iter->next;
-        continue;
+      s32 fd;
+      u8* temp_fn = alloc_printf("/NestFuzzer/tmp/queue/id:%06u", out_dir, queued_paths);
+      fd = open(temp_fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
+      if (fd < 0) PFATAL("Unable to create '%s'", temp_fn);
+      ck_write(fd, out_buf, len, temp_fn);
+      close(fd);
+      ck_free(temp_fn);
+      temp_fn = alloc_printf("/NestFuzzer/tmp/structure/id:%06u.track", out_dir, queued_paths);
+      Track *tmp_track = NULL;
+      while(tmp_track == NULL){
+        
       }
-      meta_len = length_iter->end - length_iter->start;
-      payload_len = length_iter->target_end - length_iter->target_start;
-      if (meta_len != 1 && meta_len != 2 && meta_len != 4) {
-        length_iter = length_iter->next;
-        continue;
-      }
-      if (length_iter->start + meta_len > out_len) {
-        length_iter = length_iter->next;
-        continue;
-      }
+      ck_free(temp_fn);
 
-      if(length_threshold > 1 && UR(length_threshold) != 0) {
-        length_iter = length_iter->next;
-        continue;
-      }
 
-      u32 insertion_len = length_iter->end - length_iter->start;
-      u32 index = UR(length_value_set->count);
+    // length_iter = track->lengths;
+    // while (length_iter != NULL) {
+    //   uint32_t meta_len, payload_len;
+    //   uint32_t start;
+    //   meta_len = payload_len = 0;
 
-      UniqueValue *cur = length_value_set->head;
-      for (u32 i = 0; i < index && cur != NULL; i++) {
-        cur = cur->next;
-      }
+    //   if (length_iter->start > out_len || length_iter->end > out_len ||
+    //       length_iter->target_start > out_len ||
+    //       length_iter->target_end > out_len) {
+    //     length_iter = length_iter->next;
+    //     continue;
+    //   }
+    //   meta_len = length_iter->end - length_iter->start;
+    //   payload_len = length_iter->target_end - length_iter->target_start;
+    //   if (meta_len != 1 && meta_len != 2 && meta_len != 4) {
+    //     length_iter = length_iter->next;
+    //     continue;
+    //   }
+    //   if (length_iter->start + meta_len > out_len) {
+    //     length_iter = length_iter->next;
+    //     continue;
+    //   }
 
-      if (!cur || cur->length != insertion_len) {
-        continue; 
-      }
+    //   if(length_threshold > 1 && UR(length_threshold) != 0) {
+    //     length_iter = length_iter->next;
+    //     continue;
+    //   }
 
-      if (length_iter->start + insertion_len > out_len) {
-        length_iter = length_iter->next;
-        continue;
-      }
+    //   u32 insertion_len = length_iter->end - length_iter->start;
+    //   u32 index = UR(length_value_set->count);
 
-      memcpy(out_buf + length_iter->start, cur->data, insertion_len);
+    //   UniqueValue *cur = length_value_set->head;
+    //   for (u32 i = 0; i < index && cur != NULL; i++) {
+    //     cur = cur->next;
+    //   }
+
+    //   if (!cur || cur->length != insertion_len) {
+    //     continue; 
+    //   }
+
+    //   if (length_iter->start + insertion_len > out_len) {
+    //     length_iter = length_iter->next;
+    //     continue;
+    //   }
+
+    //   memcpy(out_buf + length_iter->start, cur->data, insertion_len);
 
       // u32 new_len = 0;
       // if (insertion_len == 1)
@@ -1236,54 +1263,54 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
       //   }
       // }
 
-      length_iter = length_iter->next;
-    }
+      // length_iter = length_iter->next;
+    // }
 
     /*mutation offset*/
-    offset_iter = track->offsets;
-    while (offset_iter != NULL) {
-      u32 meta_length, payload_length;
-      if (offset_iter->start > out_len || offset_iter->end > out_len ||
-          offset_iter->target_start > out_len ||
-          offset_iter->target_end > out_len) {
-        offset_iter = offset_iter->next;
-        continue;
-      }
-      meta_length = offset_iter->end - offset_iter->start;
-      if (meta_length != 1 && meta_length != 2 && meta_length != 4) {
-        offset_iter = offset_iter->next;
-        continue;
-      }
-      if (offset_iter->start + meta_length > out_len) {
-        offset_iter = offset_iter->next;
-        continue;
-      }
+    // offset_iter = track->offsets;
+    // while (offset_iter != NULL) {
+    //   u32 meta_length, payload_length;
+    //   if (offset_iter->start > out_len || offset_iter->end > out_len ||
+    //       offset_iter->target_start > out_len ||
+    //       offset_iter->target_end > out_len) {
+    //     offset_iter = offset_iter->next;
+    //     continue;
+    //   }
+    //   meta_length = offset_iter->end - offset_iter->start;
+    //   if (meta_length != 1 && meta_length != 2 && meta_length != 4) {
+    //     offset_iter = offset_iter->next;
+    //     continue;
+    //   }
+    //   if (offset_iter->start + meta_length > out_len) {
+    //     offset_iter = offset_iter->next;
+    //     continue;
+    //   }
 
-      if(offset_threshold > 1 && UR(offset_threshold) != 0) {
-        offset_iter = offset_iter->next;
-        continue;
-      }
+    //   if(offset_threshold > 1 && UR(offset_threshold) != 0) {
+    //     offset_iter = offset_iter->next;
+    //     continue;
+    //   }
 
-      payload_length = offset_iter->target_end - offset_iter->target_start;
+    //   payload_length = offset_iter->target_end - offset_iter->target_start;
 
-      u32 insertion_len = offset_iter->end - offset_iter->start;
-      u32 index = UR(offset_value_set->count);
+    //   u32 insertion_len = offset_iter->end - offset_iter->start;
+    //   u32 index = UR(offset_value_set->count);
 
-      UniqueValue *cur = offset_value_set->head;
-      for (u32 i = 0; i < index && cur != NULL; i++) {
-        cur = cur->next;
-      }
+    //   UniqueValue *cur = offset_value_set->head;
+    //   for (u32 i = 0; i < index && cur != NULL; i++) {
+    //     cur = cur->next;
+    //   }
 
-      if (!cur || cur->length != insertion_len) {
-        continue; 
-      }
+    //   if (!cur || cur->length != insertion_len) {
+    //     continue; 
+    //   }
 
-      if (offset_iter->start + insertion_len > len) {
-        offset_iter = offset_iter->next;
-        continue;
-      }
+    //   if (offset_iter->start + insertion_len > len) {
+    //     offset_iter = offset_iter->next;
+    //     continue;
+    //   }
 
-      memcpy(out_buf + offset_iter->start, cur->data, insertion_len);
+    //   memcpy(out_buf + offset_iter->start, cur->data, insertion_len);
 
     //   // offset 값 해석
     //   u32 new_offset = 0;
@@ -1309,15 +1336,12 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
     //   }
     //   ck_free(payload_buf);
       
-      offset_iter = offset_iter->next;
-    }  
+    //   offset_iter = offset_iter->next;
+    // }  
 
-    if (common_fuzz_stuff_for_reusing(argv, out_buf, out_len, tree, track))
-      goto exit_reusing_stage;
+    common_fuzz_stuff_for_reusing(argv, out_buf, out_len, tree, track);
+    ck_free(out_buf);
   }
-exit_reusing_stage:
-  ck_free(out_buf);
-  free(map);
   return;
 }
 

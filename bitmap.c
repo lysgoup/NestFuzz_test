@@ -687,6 +687,7 @@ u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault, Chunk* tree,
 u8 save_if_interesting_for_reusing(char** argv, void* mem, u32 len, u8 fault, Chunk* tree,
                        Track* track) {
   u8* fn = "";
+  // u8* temp_fn="";
   u8* format_file = "";
   u8* format_mem;
   u8* track_file = "";
@@ -696,6 +697,13 @@ u8 save_if_interesting_for_reusing(char** argv, void* mem, u32 len, u8 fault, Ch
   u8 keeping = 0, res;
   cJSON* json;
   cJSON* track_json;
+
+  // temp_fn = alloc_printf("%s/tmp/id:%06u,%s", out_dir, queued_paths, describe_op(hnb));
+  // fd = open(temp_fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
+  // if (fd < 0) PFATAL("Unable to create '%s'", temp_fn);
+  // ck_write(fd, mem, len, fn);
+  // close(fd);
+  // ck_free(temp_fn);
 
   if (fault == crash_mode) {
     /* Keep only if there are new bits in the map, add to queue for
