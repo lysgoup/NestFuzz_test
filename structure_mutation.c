@@ -1114,9 +1114,9 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
   uint64_t max_iteration;
   max_iteration = max3(track->enum_number, track->length_number, track->offset_number);
 
+  out_len = len;
+  out_buf = ck_alloc(len);
   for(int i=0;i<max_iteration;i++){
-    out_len = len;
-    out_buf = ck_alloc(len);
     memcpy(out_buf, buf, len);
 
     //enum replacing
@@ -1147,10 +1147,10 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
       }
 
       //little endian으로 바꿔주기
-      for (u32 i = 0; i < last_len / 2; i++) {
-        u8 tmp = candi_str[i];
-        candi_str[i] = candi_str[last_len - 1 - i];
-        candi_str[last_len - 1 - i] = tmp;
+      for (u32 j = 0; j < last_len / 2; j++) {
+        u8 tmp = candi_str[j];
+        candi_str[j] = candi_str[last_len - 1 - j];
+        candi_str[last_len - 1 - j] = tmp;
       }
 
       memcpy(out_buf + stage_cur_byte, candi_str, last_len);
@@ -1159,21 +1159,59 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
       enum_iter = enum_iter->next;
     }
 
-      s32 fd;
-      u8* temp_fn = alloc_printf("/NestFuzzer/tmp/queue/id:%06u", out_dir, queued_paths);
-      fd = open(temp_fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
-      if (fd < 0) PFATAL("Unable to create '%s'", temp_fn);
-      ck_write(fd, out_buf, len, temp_fn);
-      close(fd);
-      ck_free(temp_fn);
-      temp_fn = alloc_printf("/NestFuzzer/tmp/structure/id:%06u.track", out_dir, queued_paths);
-      Track *tmp_track = NULL;
-      while(tmp_track == NULL){
-        
-      }
-      ck_free(temp_fn);
+    s32 fd;
+    u8* temp_fn = alloc_printf("/NestFuzzer/tmp/queue/id:%06u_%d", queued_paths,i);
+    fd = open(temp_fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    if (fd < 0) PFATAL("Unable to create '%s'", temp_fn);
+    ck_write(fd, out_buf, len, temp_fn);
+    close(fd);
+    ck_free(temp_fn);
+  }
 
+  DIR *dir;
+  struct dirent *entry;
+  char **file_list = NULL;
+  int file_cnt = 0;
 
+  dir = opendir("/NestFuzzer/tmp/structure");
+  if (!dir) {
+    PFATAL("Unable open directory '/NestFuzzer/tmp/structure'");
+  }
+  while(file_cnt==0){
+    while ((entry = readdir(dir)) != NULL) {
+      // . 또는 .. 제외
+      if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0 || strcmp(entry->d_name, ".isi") == 0 || strcmp(entry->d_name, ".isi.json" || strcmp(entry->d_name, ".isi.track") == 0 || strcmp(entry->d_name, ".isi.log") == 0) == 0)
+          continue;
+      file_list = realloc(file_list, sizeof(char *) * (file_cnt + 1));
+      file_list[file_cnt] = strdup(entry->d_name);  // 파일 이름 복사
+      file_cnt++;
+    }
+  }
+  closedir(dir);
+
+  // FILE *fp = fopen("/NestFuzzer/tmp/file.txt", "w");
+  // if (!fp) {
+  //     perror("파일 열기 실패");
+  //     return;
+  // }
+  // for(int i=0;i<file_cnt;i++){
+  //   fprintf(fp, "%s\n", file_list[i]);
+  // }
+  // fclose(fp);
+  for(int i=0;i<file_cnt;i++){
+    u8* filename = alloc_printf("/NestFuzzer/tmp/queue/%s",file_list[i]);
+    remove(filename);
+    ck_free(filename);
+  }
+
+  for (int i = 0; i < file_cnt; i++) {
+    free(file_list[i]);
+  }
+  free(file_list);
+
+  ck_free(out_buf);
+  
+  // for(int i=0;i<max_iteration;i++){
     // length_iter = track->lengths;
     // while (length_iter != NULL) {
     //   uint32_t meta_len, payload_len;
@@ -1339,9 +1377,9 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
     //   offset_iter = offset_iter->next;
     // }  
 
-    common_fuzz_stuff_for_reusing(argv, out_buf, out_len, tree, track);
-    ck_free(out_buf);
-  }
+    // common_fuzz_stuff_for_reusing(argv, out_buf, out_len, tree, track);
+    // ck_free(out_buf);
+  // }
   return;
 }
 
