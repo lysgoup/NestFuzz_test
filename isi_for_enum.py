@@ -227,6 +227,8 @@ def rm_guessed(seed):
         os.remove(seed_json)
     if os.path.exists(seed_track):
         os.remove(seed_track)
+    if os.path.exists(seed):
+        os.remove(seed)
 
 def adjust_structure(json_path, track_path):
     structure = ""
@@ -289,16 +291,12 @@ def handle_fuzzer_out(output, cmd, timeout):
     # os.mkdir(infer_dir)
     if not os.path.exists(infer_dir):
         os.mkdir(infer_dir)
-
-    processed = []
+    
     while True:
         seeds = os.listdir(fuzzer_queue)
         for seed in seeds:
             if seed == ".state" or "json" in seed or "track" in seed:
                 continue
-            if processed.count(seed):
-                continue
-            processed.append(seed)
 
             seed_path = os.path.join(fuzzer_queue, seed)
             shutil.copy(seed_path, infer_dir)
