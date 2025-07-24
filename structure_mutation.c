@@ -1251,9 +1251,9 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
             length_top->next = length_chunk;
             length_top = length_chunk;
           } else {
-            track->lengths = length_top = length_chunk;
+            temp_track->lengths = length_top = length_chunk;
           }
-          track->length_number++;
+          temp_track->length_number++;
         }
 
         if (strcmp(type, "offset") == 0) {
@@ -1276,119 +1276,183 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
             offset_top->next = offset_chunk;
             offset_top = offset_chunk;
           } else {
-            track->offsets = offset_top = offset_chunk;
+            temp_track->offsets = offset_top = offset_chunk;
           }
-          track->offset_number++;
+          temp_track->offset_number++;
         }
       }
       else continue;
     }
-  //   if(track->length_number > 0){
-      u8* temp_fn = alloc_printf("/NestFuzzer/tmp/queue/%s", entry->d_name);
-      u32 fd = open(temp_fn, O_RDONLY);
-      if (fd < 0) PFATAL("Unable to open '%s'", temp_fn);
-      close(fd);
-      remove(temp_fn);
-      ck_free(temp_fn);
-  //   }
+
+    struct stat st;
+    u8* temp_fn = alloc_printf("/NestFuzzer/tmp/queue/%s", entry->d_name);
+    s32 fd = open(temp_fn, O_RDONLY);
+    if (fd < 0) PFATAL("Unable to open '%s'", temp_fn);
+
+    if (lstat(temp_fn, &st) || access(temp_fn, R_OK)) PFATAL("Unable to access '%s'", temp_fn);
+    out_len = st.st_size;
+    out_buf = ck_alloc(out_len);
+    ssize_t bytes_read = read(fd, out_buf, out_len);
+    if (bytes_read != out_len) {
+      PFATAL("Reusing: out_buf error");
+    }
+    close(fd);
+
+    for(int i=0;i<max_iteration;i++){
+      length_iter = temp_track->lengths;
+      while(length_iter != NULL) {
+        u8* length_fn;
+        s32 length_fd;
+        length_fn = alloc_printf("/NestFuzzer/tmp/structure/%s_length",entry->d_name);
+        length_fd = open(length_fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
+        if (length_fd < 0) PFATAL("Unable to create '%s'", length_fn);
+
+        FILE *fp = fopen("/NestFuzzer/length_log.txt", "w");
+        
+        uint32_t meta_len, payload_len;
+        uint32_t start;
+        meta_len = payload_len = 0;
+
+        if (length_iter->start > out_len || length_iter->end > out_len || length_iter->target_start > out_len || length_iter->target_end > out_len) {
+          length_iter = length_iter->next;
+          continue;
+        }
+
+        meta_len = length_iter->end - length_iter->start;
+        payload_len = length_iter->target_end - length_iter->target_start;
+
+        if (meta_len != 1 && meta_len != 2 && meta_len != 4) {
+          length_iter = length_iter->next;
+          continue;
+        }
+        if (length_iter->start + meta_len > out_len) {
+          length_iter = length_iter->next;
+          continue;
+        }
+
+        if(length_threshold > 1 && UR(length_threshold) != 0) {
+          length_iter = length_iter->next;
+          continue;
+        }
+
+        u32 index = UR(length_value_set->count);
+        UniqueValue *cur = length_value_set->head;
+        for (u32 i = 0; i < index && cur != NULL; i++) {
+          cur = cur->next;
+        }
+
+        if (!cur || cur->length != meta_len) {
+          length_iter = length_iter->next;
+          continue; 
+        }
+
+        memcpy(out_buf + length_iter->start, cur->data, meta_len);
+
+        u32 new_len_value = 0;
+        //little endeian일 경우에
+        // if (meta_len == 1)
+        //   new_len_value = *(u8 *)cur->data;
+        // else if (meta_len == 2)
+        //   new_len_value = *(u16 *)cur->data;
+        // else if (meta_len == 4)
+        //   new_len_value = *(u32 *)cur->data;
+
+        //big endian일 경우에
+        u8* p = (u8*)cur->data;
+        if (meta_len == 1) {
+          new_len_value = p[0];
+        } else if (meta_len == 2) {
+          new_len_value = (p[0] << 8) | p[1];
+        } else if (meta_len == 4) {
+          new_len_value = (p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3];
+        }
+
+        if (fp) {
+          fprintf(fp, "payload_len: %d\n", payload_len);
+          fprintf(fp, "new_len_value: %d\n", new_len_value);
+        }
+        
+        if (new_len_value > payload_len) {
+          if (fp) {
+            fprintf(fp, "insert\n");
+          }
+
+          u32 grow_len = new_len_value - payload_len;
+          u32 insert_pos = length_iter->target_end;
+
+          // ✅ 안전성 체크: copy_start가 0보다 작아지는 것 방지
+          if (insert_pos >= grow_len && insert_pos + grow_len <= out_len) {
+            u32 copy_start = insert_pos - grow_len;
+            if (copy_start + grow_len <= out_len) {
+              out_buf = copy_and_insert(out_buf, &out_len, insert_pos,
+                                        copy_start, grow_len);
+            } 
+            else {
+              // fallback: 일부만 복사
+              u32 safe_len = out_len - copy_start;
+              if (safe_len > 0) out_buf = copy_and_insert(out_buf, &out_len, insert_pos, copy_start, safe_len);
+            }
+          } 
+          else {
+            // 안전을 위해 뒤쪽 일부만 복사
+            u32 max_insert = (insert_pos < len) ? (len - insert_pos) : 0;
+            u32 safe_start = (insert_pos >= max_insert) ? (insert_pos - max_insert) : 0;
+            if (max_insert > 0) {
+              out_buf = copy_and_insert(out_buf, &out_len, insert_pos, safe_start, max_insert);
+            }
+          }
+        } 
+        else if (new_len_value < payload_len) {
+          if (fp) {
+            fprintf(fp, "shrink\n");
+          }
+          // payload 축소
+          u32 shrink_len = payload_len - new_len_value;
+          u32 delete_start = length_iter->target_start;
+          if (delete_start <= out_len && shrink_len <= out_len && delete_start + shrink_len <= out_len) {
+            out_buf = delete_data(out_buf, &out_len, delete_start, shrink_len);
+          }
+        }
+        length_iter = length_iter->next;
+
+        // u8* length_fn = alloc_printf("/NestFuzzer/tmp/structure/%s_length",entry->d_name);
+        // s32 length_fd = open(length_fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
+        // if (length_fd < 0) PFATAL("Unable to create '%s'", length_fn);
+        // ck_write(length_fd, out_buf, strlen(out_buf), length_fn);
+        s32 res = write(length_fd, out_buf, out_len);
+        if (res != out_len) {
+          PFATAL("Short write to %s (wrote %d of %d bytes)", length_fn, res, out_len);
+        }
+        close(length_fd);
+        ck_free(length_fn);
+
+        if (fp) {
+          fclose(fp);
+        }
+      }
+
+      offset_iter = temp_track->offsets;
+      while(offset_iter != NULL){
+        offset_iter = offset_iter->next;
+      }
+    }
+
+    u8* temp_track_fn = alloc_printf("/NestFuzzer/tmp/structure/%s.track",entry->d_name);
+    u8* temp_json_fn = alloc_printf("/NestFuzzer/tmp/structure/%s.json",entry->d_name);
+    // remove(temp_fn);
+    // remove(temp_track_fn);
+    remove(temp_json_fn);
+    ck_free(temp_fn);
+    ck_free(temp_track_fn);
+    ck_free(temp_json_fn);
+
     cJSON_Delete(cjson_head);
     free_track(temp_track);
+    ck_free(out_buf);
   }
 
   closedir(dir);
   // for(int i=0;i<max_iteration;i++){
-    // length_iter = track->lengths;
-    // while (length_iter != NULL) {
-    //   uint32_t meta_len, payload_len;
-    //   uint32_t start;
-    //   meta_len = payload_len = 0;
-
-    //   if (length_iter->start > out_len || length_iter->end > out_len ||
-    //       length_iter->target_start > out_len ||
-    //       length_iter->target_end > out_len) {
-    //     length_iter = length_iter->next;
-    //     continue;
-    //   }
-    //   meta_len = length_iter->end - length_iter->start;
-    //   payload_len = length_iter->target_end - length_iter->target_start;
-    //   if (meta_len != 1 && meta_len != 2 && meta_len != 4) {
-    //     length_iter = length_iter->next;
-    //     continue;
-    //   }
-    //   if (length_iter->start + meta_len > out_len) {
-    //     length_iter = length_iter->next;
-    //     continue;
-    //   }
-
-    //   if(length_threshold > 1 && UR(length_threshold) != 0) {
-    //     length_iter = length_iter->next;
-    //     continue;
-    //   }
-
-    //   u32 insertion_len = length_iter->end - length_iter->start;
-    //   u32 index = UR(length_value_set->count);
-
-    //   UniqueValue *cur = length_value_set->head;
-    //   for (u32 i = 0; i < index && cur != NULL; i++) {
-    //     cur = cur->next;
-    //   }
-
-    //   if (!cur || cur->length != insertion_len) {
-    //     continue; 
-    //   }
-
-    //   if (length_iter->start + insertion_len > out_len) {
-    //     length_iter = length_iter->next;
-    //     continue;
-    //   }
-
-    //   memcpy(out_buf + length_iter->start, cur->data, insertion_len);
-
-      // u32 new_len = 0;
-      // if (insertion_len == 1)
-      //   new_len = *(u8 *)cur->data;
-      // else if (insertion_len == 2)
-      //   new_len = *(u16 *)cur->data;
-      // else if (insertion_len == 4)
-      //   new_len = *(u32 *)cur->data;
-      // // // 길이 차이 계산
-      // if (new_len > payload_len) {
-      //   u32 grow_len = new_len - payload_len;
-      //   u32 insert_pos = length_iter->target_end;
-
-      //   // ✅ 안전성 체크: copy_start가 0보다 작아지는 것 방지
-        // if (insert_pos >= grow_len && insert_pos + grow_len <= out_len) {
-          // u32 copy_start = insert_pos - grow_len;
-          // if (copy_start + grow_len <= out_len) {
-      //       out_buf = copy_and_insert(out_buf, &out_len, insert_pos,
-      //                                 copy_start, grow_len);
-      //     } else {
-      //       // fallback: 일부만 복사
-      //       u32 safe_len = out_len - copy_start;
-      //       if (safe_len > 0)
-      //         out_buf = copy_and_insert(out_buf, &out_len, insert_pos,
-      //                                   copy_start, safe_len);
-      //     }
-      //   } else {
-      //     // 안전을 위해 뒤쪽 일부만 복사
-      //     u32 max_insert = (insert_pos < len) ? (len - insert_pos) : 0;
-      //     u32 safe_start = (insert_pos >= max_insert) ? (insert_pos - max_insert) : 0;
-      //     if (max_insert > 0) {
-      //       out_buf = copy_and_insert(out_buf, &out_len, insert_pos, safe_start, max_insert);
-      //     }
-        // }
-      // } else if (new_len < payload_len) {
-      // // //   // payload 축소
-      //   u32 shrink_len = payload_len - new_len;
-      //   u32 delete_start = length_iter->target_start;
-      //   if (delete_start <= out_len && shrink_len <= out_len && delete_start + shrink_len <= out_len) {
-      //     out_buf = delete_data(out_buf, &out_len, delete_start, shrink_len);
-      //   }
-      // }
-
-      // length_iter = length_iter->next;
-    // }
-
     /*mutation offset*/
     // offset_iter = track->offsets;
     // while (offset_iter != NULL) {
