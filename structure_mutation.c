@@ -535,6 +535,29 @@ cJSON *get_structure_json(const u8 *path, const u8 *suffix) {
   return NULL;
 }
 
+cJSON *get_structure_json_for_reusing(const u8 *path, const u8 *suffix) {
+  cJSON *cjson_head;
+  struct stat st;
+  u8 *file_name = basename((char *)path);
+  u8 *structure_file = alloc_printf("/NestFuzzer/tmp/structure/%s%s", file_name, suffix);
+  if (!lstat(structure_file, &st)) {
+    cjson_head = get_json(structure_file);
+    ck_free(structure_file);
+    // queue_cur->was_inferred = 1;
+    return cjson_head;
+  }
+  ck_free(structure_file);
+  structure_file = alloc_printf("/NestFuzzer/tmp/queue/%s%s", file_name, suffix);
+  if (!lstat(structure_file, &st)) {
+    cjson_head = get_json(structure_file);
+    ck_free(structure_file);
+    // queue_cur->was_inferred = 0;
+    return cjson_head;
+  }
+  ck_free(structure_file);
+  return NULL;
+}
+
 Chunk *json_to_tree(cJSON *cjson_head) {
   uint32_t chunk_num = cJSON_GetArraySize(cjson_head);
   Chunk *head, *top, *iter;
@@ -648,11 +671,11 @@ Track *parse_constraint_file(u8 *path, u8 *in_buf) {
           track->enums = enum_top = enum_chunk;
         }
         track->enum_number++;
-        u32 len = enum_chunk->end - enum_chunk->start;
-        u8 *val = ck_alloc(len);
-        memcpy(val, in_buf + enum_chunk->start, len);
-        enum_value_set->insert(enum_value_set, val, len);
-        ck_free(val);
+        // u32 len = enum_chunk->end - enum_chunk->start;
+        // u8 *val = ck_alloc(len);
+        // memcpy(val, in_buf + enum_chunk->start, len);
+        // enum_value_set->insert(enum_value_set, val, len);
+        // ck_free(val);
       }
       if (strcmp(type, "length") == 0) {
         Length *length_chunk = ck_alloc(sizeof(struct Length));
@@ -1129,8 +1152,14 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
         continue;
       }
 
+      //png signature는 replace에서 제외
+      if(enum_iter->start == 0){
+        enum_iter = enum_iter->next;
+        continue;
+      }
+
       //choose candidate randomly
-      u32 index = UR(enum_iter->cans_num / 2);
+      u32 index = UR(enum_iter->cans_num);
       stage_cur_byte = enum_iter->start;
       last_len=0;
       candi_str = parse_candidate(enum_iter->candidates[index], &last_len);
@@ -1147,11 +1176,11 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
       }
 
       //little endian으로 바꿔주기
-      for (u32 j = 0; j < last_len / 2; j++) {
-        u8 tmp = candi_str[j];
-        candi_str[j] = candi_str[last_len - 1 - j];
-        candi_str[last_len - 1 - j] = tmp;
-      }
+      // for (u32 j = 0; j < last_len / 2; j++) {
+      //   u8 tmp = candi_str[j];
+      //   candi_str[j] = candi_str[last_len - 1 - j];
+      //   candi_str[last_len - 1 - j] = tmp;
+      // }
 
       memcpy(out_buf + stage_cur_byte, candi_str, last_len);
 
@@ -1160,57 +1189,113 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
     }
 
     s32 fd;
-    u8* temp_fn = alloc_printf("/NestFuzzer/tmp/queue/id:%06u_%d", queued_paths,i);
+    u8* temp_fn = alloc_printf("/NestFuzzer/tmp/queue/%06u_%d", current_entry,i);
     fd = open(temp_fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
     if (fd < 0) PFATAL("Unable to create '%s'", temp_fn);
     ck_write(fd, out_buf, len, temp_fn);
     close(fd);
     ck_free(temp_fn);
   }
+  ck_free(out_buf);
 
   DIR *dir;
   struct dirent *entry;
-  char **file_list = NULL;
-  int file_cnt = 0;
 
-  dir = opendir("/NestFuzzer/tmp/structure");
+  dir = opendir("/NestFuzzer/tmp/queue");
   if (!dir) {
-    PFATAL("Unable open directory '/NestFuzzer/tmp/structure'");
+    PFATAL("Unable open directory '/NestFuzzer/tmp/queue'");
   }
-  while(file_cnt==0){
-    while ((entry = readdir(dir)) != NULL) {
-      // . 또는 .. 제외
-      if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0 || strcmp(entry->d_name, ".isi") == 0 || strcmp(entry->d_name, ".isi.json" || strcmp(entry->d_name, ".isi.track") == 0 || strcmp(entry->d_name, ".isi.log") == 0) == 0)
-          continue;
-      file_list = realloc(file_list, sizeof(char *) * (file_cnt + 1));
-      file_list[file_cnt] = strdup(entry->d_name);  // 파일 이름 복사
-      file_cnt++;
+
+  while ((entry = readdir(dir)) != NULL) {
+    // Skip '.' and '..' entries
+    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+      continue;
+
+    cJSON *cjson_head = get_structure_json_for_reusing(entry->d_name, ".track");
+    if (cjson_head == NULL) continue;
+    u32 num;
+    num = cJSON_GetArraySize(cjson_head);
+    Track *temp_track;
+    Offset *offset_top = NULL;
+    Length *length_top = NULL;
+    temp_track = ck_alloc(sizeof(struct Track));
+    temp_track->constraints = NULL;
+    temp_track->lengths = NULL;
+    temp_track->offsets = NULL;
+    temp_track->enums = NULL;
+    temp_track->enum_number = 0;
+    temp_track->length_number = 0;
+    temp_track->offset_number = 0;
+    for (u32 i = 0; i < num; i++) {
+      cJSON *item = cJSON_GetArrayItem(cjson_head, i);
+      if (cJSON_HasObjectItem(item, "type")) {
+        char *type = cJSON_GetObjectItemCaseSensitive(item, "type")->valuestring;
+
+        if (strcmp(type, "length") == 0) {
+          Length *length_chunk = ck_alloc(sizeof(struct Length));
+          length_chunk->start =
+              cJSON_GetObjectItemCaseSensitive(item, "start")->valueint;
+          length_chunk->end =
+              cJSON_GetObjectItemCaseSensitive(item, "end")->valueint;
+          length_chunk->id = (uint8_t *)ck_alloc(strlen(item->string) + 1);
+          strcpy(length_chunk->id, item->string);
+          cJSON *target = cJSON_GetArrayItem(item, cJSON_GetArraySize(item) - 1);
+          length_chunk->target_start =
+              cJSON_GetObjectItemCaseSensitive(target, "start")->valueint;
+          length_chunk->target_end =
+              cJSON_GetObjectItemCaseSensitive(target, "end")->valueint;
+          length_chunk->target_id = (uint8_t *)ck_alloc(strlen(target->string) + 1);
+          strcpy(length_chunk->target_id, target->string);
+          length_chunk->next = NULL;
+          if (length_top) {
+            length_top->next = length_chunk;
+            length_top = length_chunk;
+          } else {
+            track->lengths = length_top = length_chunk;
+          }
+          track->length_number++;
+        }
+
+        if (strcmp(type, "offset") == 0) {
+          Offset *offset_chunk = ck_alloc(sizeof(struct Offset));
+          offset_chunk->start =
+              cJSON_GetObjectItemCaseSensitive(item, "start")->valueint;
+          offset_chunk->end =
+              cJSON_GetObjectItemCaseSensitive(item, "end")->valueint;
+          offset_chunk->id = (uint8_t *)ck_alloc(strlen(item->string) + 1);
+          strcpy(offset_chunk->id, item->string);
+          cJSON *target = cJSON_GetArrayItem(item, cJSON_GetArraySize(item) - 1);
+          offset_chunk->target_start =
+              cJSON_GetObjectItemCaseSensitive(target, "start")->valueint;
+          offset_chunk->target_end =
+              cJSON_GetObjectItemCaseSensitive(target, "end")->valueint;
+          offset_chunk->target_id = (uint8_t *)ck_alloc(strlen(target->string) + 1);
+          strcpy(offset_chunk->target_id, target->string);
+          offset_chunk->next = NULL;
+          if (offset_top) {
+            offset_top->next = offset_chunk;
+            offset_top = offset_chunk;
+          } else {
+            track->offsets = offset_top = offset_chunk;
+          }
+          track->offset_number++;
+        }
+      }
+      else continue;
     }
+  //   if(track->length_number > 0){
+      u8* temp_fn = alloc_printf("/NestFuzzer/tmp/queue/%s", entry->d_name);
+      u32 fd = open(temp_fn, O_RDONLY);
+      if (fd < 0) PFATAL("Unable to open '%s'", temp_fn);
+      close(fd);
+      remove(temp_fn);
+      ck_free(temp_fn);
+  //   }
+    cJSON_Delete(cjson_head);
+    free_track(temp_track);
   }
+
   closedir(dir);
-
-  // FILE *fp = fopen("/NestFuzzer/tmp/file.txt", "w");
-  // if (!fp) {
-  //     perror("파일 열기 실패");
-  //     return;
-  // }
-  // for(int i=0;i<file_cnt;i++){
-  //   fprintf(fp, "%s\n", file_list[i]);
-  // }
-  // fclose(fp);
-  for(int i=0;i<file_cnt;i++){
-    u8* filename = alloc_printf("/NestFuzzer/tmp/queue/%s",file_list[i]);
-    remove(filename);
-    ck_free(filename);
-  }
-
-  for (int i = 0; i < file_cnt; i++) {
-    free(file_list[i]);
-  }
-  free(file_list);
-
-  ck_free(out_buf);
-  
   // for(int i=0;i<max_iteration;i++){
     // length_iter = track->lengths;
     // while (length_iter != NULL) {

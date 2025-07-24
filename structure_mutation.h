@@ -58,6 +58,7 @@ Constraint *get_random_constraint(Constraint *head);
 cJSON *get_json(const u8 *path);
 
 cJSON *get_structure_json(const u8 *path, const u8 *suffix);
+cJSON *get_structure_json_for_reusing(const u8 *path, const u8 *suffix);
 
 Chunk *json_to_tree(cJSON *cjson_head);
 Boolean is_inferred(u8 *path);

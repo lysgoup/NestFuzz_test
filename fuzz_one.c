@@ -282,20 +282,20 @@ u8 fuzz_one(char **argv) {
     fclose(fp);
   }
 
-  fp = fopen("/NestFuzzer/pool_log.txt", "w");
-  if (fp) {
-      fprintf(fp, "Current total: %u\n", enum_value_set->count);
-      UniqueValue *iter = enum_value_set->head;
-      while (iter) {
-          print_hex(fp, iter->data, iter->length);
-          fprintf(fp, " (len: %u)\n", iter->length);
-          iter = iter->next;
-      }
-      // fprintf(fp, "--------------------\n");
-      fclose(fp);
-  } else {
-      perror("Failed to open log file");
-  }
+  // fp = fopen("/NestFuzzer/pool_log.txt", "w");
+  // if (fp) {
+  //     fprintf(fp, "Current total: %u\n", enum_value_set->count);
+  //     UniqueValue *iter = enum_value_set->head;
+  //     while (iter) {
+  //         print_hex(fp, iter->data, iter->length);
+  //         fprintf(fp, " (len: %u)\n", iter->length);
+  //         iter = iter->next;
+  //     }
+  //     // fprintf(fp, "--------------------\n");
+  //     fclose(fp);
+  // } else {
+  //     perror("Failed to open log file");
+  // }
 
   if (track != NULL) reusing_stage(argv, in_buf, len, in_tree, track);
 

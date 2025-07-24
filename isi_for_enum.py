@@ -295,11 +295,19 @@ def handle_fuzzer_out(output, cmd, timeout):
         for seed in seeds:
             if seed == ".state" or "json" in seed or "track" in seed:
                 continue
+            
+            input_path = os.path.join(infer_dir, seed)
+            target_track_path = input_path+".track"
+
+            if os.path.exists(target_track_path):
+                # print("파일이 존재합니다.", target_track_path)
+                continue
+            else:
+                # print("파일이 존재하지 않습니다.", target_track_path)
 
             seed_path = os.path.join(fuzzer_queue, seed)
             shutil.copy(seed_path, infer_dir)
 
-            input_path = os.path.join(infer_dir, seed)
 
             json_legel = infer_strcuture(input_path, cmd, timeout)
 
