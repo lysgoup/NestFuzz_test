@@ -320,7 +320,7 @@ def handle_fuzzer_out(output, cmd, timeout):
             if os.path.exists(input_path):
                 os.remove(input_path)
         # print("###Wait 1s for new files###")
-        sleep(1)
+        # sleep(1)
 
 def main():
     global log_file

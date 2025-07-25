@@ -1191,7 +1191,10 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
     s32 fd;
     u8* temp_fn = alloc_printf("/NestFuzzer/tmp/queue/%06u_%d", current_entry,i);
     fd = open(temp_fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
-    if (fd < 0) PFATAL("Unable to create '%s'", temp_fn);
+    if (fd < 0){
+      ck_free(temp_fn);
+      continue;
+    }
     ck_write(fd, out_buf, len, temp_fn);
     close(fd);
     ck_free(temp_fn);
@@ -1290,25 +1293,30 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
     if (fd < 0) PFATAL("Unable to open '%s'", temp_fn);
 
     if (lstat(temp_fn, &st) || access(temp_fn, R_OK)) PFATAL("Unable to access '%s'", temp_fn);
-    out_len = st.st_size;
-    out_buf = ck_alloc(out_len);
-    ssize_t bytes_read = read(fd, out_buf, out_len);
-    if (bytes_read != out_len) {
+    u8* temp_buf;
+    u32 temp_buf_len;
+    temp_buf_len = st.st_size;
+    temp_buf = ck_alloc(temp_buf_len);
+    ssize_t bytes_read = read(fd, temp_buf, temp_buf_len);
+    if (bytes_read != temp_buf_len) {
       PFATAL("Reusing: out_buf error");
     }
     close(fd);
 
     for(int i=0;i<max_iteration;i++){
+      out_len = temp_buf_len;
+      out_buf = ck_alloc(out_len);
+      memcpy(out_buf,temp_buf,out_len);
+      
       length_iter = temp_track->lengths;
       while(length_iter != NULL) {
-        u8* length_fn;
-        s32 length_fd;
-        length_fn = alloc_printf("/NestFuzzer/tmp/structure/%s_length",entry->d_name);
-        length_fd = open(length_fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
-        if (length_fd < 0) PFATAL("Unable to create '%s'", length_fn);
+        // u8* length_fn;
+        // s32 length_fd;
+        // length_fn = alloc_printf("/NestFuzzer/tmp/structure/%s_length",entry->d_name);
+        // length_fd = open(length_fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
+        // if (length_fd < 0) PFATAL("Unable to create '%s'", length_fn);
 
-        FILE *fp = fopen("/NestFuzzer/length_log.txt", "w");
-        
+        // FILE *fp = fopen("/NestFuzzer/length_log.txt", "w");
         uint32_t meta_len, payload_len;
         uint32_t start;
         meta_len = payload_len = 0;
@@ -1367,15 +1375,14 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
           new_len_value = (p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3];
         }
 
-        if (fp) {
-          fprintf(fp, "payload_len: %d\n", payload_len);
-          fprintf(fp, "new_len_value: %d\n", new_len_value);
-        }
-        
+        // if (fp) {
+        //   fprintf(fp, "payload_len: %d\n", payload_len);
+        //   fprintf(fp, "new_len_value: %d\n", new_len_value);
+        // }
         if (new_len_value > payload_len) {
-          if (fp) {
-            fprintf(fp, "insert\n");
-          }
+          // if (fp) {
+          //   fprintf(fp, "insert\n");
+          // }
 
           u32 grow_len = new_len_value - payload_len;
           u32 insert_pos = length_iter->target_end;
@@ -1403,9 +1410,9 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
           }
         } 
         else if (new_len_value < payload_len) {
-          if (fp) {
-            fprintf(fp, "shrink\n");
-          }
+          // if (fp) {
+          //   fprintf(fp, "shrink\n");
+          // }
           // payload 축소
           u32 shrink_len = payload_len - new_len_value;
           u32 delete_start = length_iter->target_start;
@@ -1413,34 +1420,51 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
             out_buf = delete_data(out_buf, &out_len, delete_start, shrink_len);
           }
         }
+        s32 delta = (s32)new_len_value - (s32)payload_len;
+        Length *temp_length_iter = length_iter->next;
+        while(temp_length_iter!=NULL){
+          //length field의 위치 조정
+          if(temp_length_iter->start > length_iter->target_end){
+            temp_length_iter->start += delta;
+            temp_length_iter->end += delta;
+          }
+          if(temp_length_iter->target_start > length_iter->target_end){
+            temp_length_iter->target_start += delta;
+            temp_length_iter->target_end += delta;
+          }
+          temp_length_iter = temp_length_iter->next;
+        }
         length_iter = length_iter->next;
 
         // u8* length_fn = alloc_printf("/NestFuzzer/tmp/structure/%s_length",entry->d_name);
         // s32 length_fd = open(length_fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
         // if (length_fd < 0) PFATAL("Unable to create '%s'", length_fn);
         // ck_write(length_fd, out_buf, strlen(out_buf), length_fn);
-        s32 res = write(length_fd, out_buf, out_len);
-        if (res != out_len) {
-          PFATAL("Short write to %s (wrote %d of %d bytes)", length_fn, res, out_len);
-        }
-        close(length_fd);
-        ck_free(length_fn);
+        // s32 res = write(length_fd, out_buf, out_len);
+        // if (res != out_len) {
+        //   PFATAL("Short write to %s (wrote %d of %d bytes)", length_fn, res, out_len);
+        // }
+        // close(length_fd);
+        // ck_free(length_fn);
 
-        if (fp) {
-          fclose(fp);
-        }
+        // if (fp) {
+        //   fclose(fp);
+        // }
       }
 
-      offset_iter = temp_track->offsets;
-      while(offset_iter != NULL){
-        offset_iter = offset_iter->next;
-      }
+      // offset_iter = temp_track->offsets;
+      // while(offset_iter != NULL){
+      //   offset_iter = offset_iter->next;
+      // }
+    
+      common_fuzz_stuff_for_reusing(argv, out_buf, out_len, tree, track);
+      ck_free(out_buf);
     }
 
     u8* temp_track_fn = alloc_printf("/NestFuzzer/tmp/structure/%s.track",entry->d_name);
     u8* temp_json_fn = alloc_printf("/NestFuzzer/tmp/structure/%s.json",entry->d_name);
-    // remove(temp_fn);
-    // remove(temp_track_fn);
+    remove(temp_fn);
+    remove(temp_track_fn);
     remove(temp_json_fn);
     ck_free(temp_fn);
     ck_free(temp_track_fn);
@@ -1448,7 +1472,6 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
 
     cJSON_Delete(cjson_head);
     free_track(temp_track);
-    ck_free(out_buf);
   }
 
   closedir(dir);
