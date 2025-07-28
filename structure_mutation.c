@@ -1175,13 +1175,6 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
         continue;
       }
 
-      //little endian으로 바꿔주기
-      // for (u32 j = 0; j < last_len / 2; j++) {
-      //   u8 tmp = candi_str[j];
-      //   candi_str[j] = candi_str[last_len - 1 - j];
-      //   candi_str[last_len - 1 - j] = tmp;
-      // }
-
       memcpy(out_buf + stage_cur_byte, candi_str, last_len);
 
       ck_free(candi_str);
@@ -1307,16 +1300,18 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
       out_len = temp_buf_len;
       out_buf = ck_alloc(out_len);
       memcpy(out_buf,temp_buf,out_len);
-      
+
+      // u8* length_fn;
+      // s32 length_fd;
+      // if(temp_track->length_number > 1){
+      //   length_fn = alloc_printf("/NestFuzzer/tmp/structure/%s_length",entry->d_name);
+      //   length_fd = open(length_fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
+      //   if (length_fd < 0) PFATAL("Unable to create '%s'", length_fn);
+      // }
+      // FILE *fp = fopen("/NestFuzzer/length_log.txt", "w");
+
       length_iter = temp_track->lengths;
       while(length_iter != NULL) {
-        // u8* length_fn;
-        // s32 length_fd;
-        // length_fn = alloc_printf("/NestFuzzer/tmp/structure/%s_length",entry->d_name);
-        // length_fd = open(length_fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
-        // if (length_fd < 0) PFATAL("Unable to create '%s'", length_fn);
-
-        // FILE *fp = fopen("/NestFuzzer/length_log.txt", "w");
         uint32_t meta_len, payload_len;
         uint32_t start;
         meta_len = payload_len = 0;
@@ -1354,9 +1349,7 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
           continue; 
         }
 
-        memcpy(out_buf + length_iter->start, cur->data, meta_len);
-
-        u32 new_len_value = 0;
+        uint32_t new_len_value = 0;
         //little endeian일 경우에
         // if (meta_len == 1)
         //   new_len_value = *(u8 *)cur->data;
@@ -1375,6 +1368,13 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
           new_len_value = (p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3];
         }
 
+        if ((uint64_t)new_len_value + (uint64_t)out_len >= 1000000000ULL){
+          length_iter = length_iter->next;
+          continue; 
+        }
+
+        memcpy(out_buf + length_iter->start, cur->data, meta_len);
+
         // if (fp) {
         //   fprintf(fp, "payload_len: %d\n", payload_len);
         //   fprintf(fp, "new_len_value: %d\n", new_len_value);
@@ -1384,30 +1384,45 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
           //   fprintf(fp, "insert\n");
           // }
 
-          u32 grow_len = new_len_value - payload_len;
-          u32 insert_pos = length_iter->target_end;
-
-          // ✅ 안전성 체크: copy_start가 0보다 작아지는 것 방지
-          if (insert_pos >= grow_len && insert_pos + grow_len <= out_len) {
-            u32 copy_start = insert_pos - grow_len;
-            if (copy_start + grow_len <= out_len) {
-              out_buf = copy_and_insert(out_buf, &out_len, insert_pos,
-                                        copy_start, grow_len);
-            } 
-            else {
-              // fallback: 일부만 복사
-              u32 safe_len = out_len - copy_start;
-              if (safe_len > 0) out_buf = copy_and_insert(out_buf, &out_len, insert_pos, copy_start, safe_len);
+          uint32_t grow_len = new_len_value - payload_len;
+          uint32_t insert_pos = length_iter->target_end;
+          if(grow_len >= out_len){
+            uint32_t copy_start = 0;
+            while(grow_len > out_len && out_len != 0){
+              uint32_t size = (uint32_t)out_len;
+              out_buf = copy_and_insert(out_buf, &out_len, insert_pos, copy_start, size);
+              grow_len -= size;
             }
-          } 
-          else {
-            // 안전을 위해 뒤쪽 일부만 복사
-            u32 max_insert = (insert_pos < len) ? (len - insert_pos) : 0;
-            u32 safe_start = (insert_pos >= max_insert) ? (insert_pos - max_insert) : 0;
-            if (max_insert > 0) {
-              out_buf = copy_and_insert(out_buf, &out_len, insert_pos, safe_start, max_insert);
+            if (grow_len > 0) {
+              out_buf = copy_and_insert(out_buf, &out_len, insert_pos, copy_start, grow_len);
             }
           }
+          else{
+            uint32_t copy_start = 0;
+            out_buf = copy_and_insert(out_buf, &out_len, length_iter->target_end, copy_start, grow_len);
+          }
+
+          // // ✅ 안전성 체크: copy_start가 0보다 작아지는 것 방지
+          // if (insert_pos >= grow_len && insert_pos + grow_len <= out_len) {
+          //   u32 copy_start = insert_pos - grow_len;
+          //   if (copy_start + grow_len <= out_len) {
+          //     out_buf = copy_and_insert(out_buf, &out_len, insert_pos,
+          //                               copy_start, grow_len);
+          //   } 
+          //   else {
+          //     // fallback: 일부만 복사
+          //     u32 safe_len = out_len - copy_start;
+          //     if (safe_len > 0) out_buf = copy_and_insert(out_buf, &out_len, insert_pos, copy_start, safe_len);
+          //   }
+          // } 
+          // else {
+          //   // 안전을 위해 뒤쪽 일부만 복사
+          //   u32 max_insert = (insert_pos < len) ? (len - insert_pos) : 0;
+          //   u32 safe_start = (insert_pos >= max_insert) ? (insert_pos - max_insert) : 0;
+          //   if (max_insert > 0) {
+          //     out_buf = copy_and_insert(out_buf, &out_len, insert_pos, safe_start, max_insert);
+          //   }
+          // }
         } 
         else if (new_len_value < payload_len) {
           // if (fp) {
@@ -1435,23 +1450,19 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
           temp_length_iter = temp_length_iter->next;
         }
         length_iter = length_iter->next;
-
-        // u8* length_fn = alloc_printf("/NestFuzzer/tmp/structure/%s_length",entry->d_name);
-        // s32 length_fd = open(length_fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
-        // if (length_fd < 0) PFATAL("Unable to create '%s'", length_fn);
-        // ck_write(length_fd, out_buf, strlen(out_buf), length_fn);
-        // s32 res = write(length_fd, out_buf, out_len);
-        // if (res != out_len) {
-        //   PFATAL("Short write to %s (wrote %d of %d bytes)", length_fn, res, out_len);
-        // }
-        // close(length_fd);
-        // ck_free(length_fn);
-
-        // if (fp) {
-        //   fclose(fp);
-        // }
       }
-
+      // if (fp) {
+      //   fclose(fp);
+      // }
+      // if(temp_track->length_number > 1){
+      //   s32 res = write(length_fd, out_buf, out_len);
+      //   if (res != out_len) {
+      //     PFATAL("Short write to %s (wrote %d of %d bytes)", length_fn, res, out_len);
+      //   }
+      //   close(length_fd);
+      //   ck_free(length_fn);
+      // }
+      
       // offset_iter = temp_track->offsets;
       // while(offset_iter != NULL){
       //   offset_iter = offset_iter->next;
