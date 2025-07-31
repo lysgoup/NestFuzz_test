@@ -274,7 +274,7 @@ u8 fuzz_one(char **argv) {
 
   track = parse_constraint_file(queue_cur->fname, in_buf);
 
-  FILE *fp = fopen("/libpng-fuzzer/value_pool_log.txt", "w");
+  FILE *fp = fopen("/NestFuzzer/pool_log_count.txt", "w");
   if (fp) {
     fprintf(fp, "enum_value_set: %u\n", enum_value_set ? enum_value_set->count : 0);
     fprintf(fp, "length_value_set: %u\n", length_value_set ? length_value_set->count : 0);
@@ -282,7 +282,7 @@ u8 fuzz_one(char **argv) {
     fclose(fp);
   }
 
-  fp = fopen("/NestFuzzer/pool_log.txt", "w");
+  fp = fopen("/NestFuzzer/pool_log_value.txt", "w");
   if (fp) {
       fprintf(fp, "Current total: %u\n", length_value_set->count);
       UniqueValue *iter = length_value_set->head;

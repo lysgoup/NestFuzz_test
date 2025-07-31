@@ -510,9 +510,9 @@ u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault, Chunk* tree,
     format_file = alloc_printf("%s.json", fn);
     track_file = alloc_printf("%s.track", fn);
     if (track != NULL) {
-      add_to_queue(fn, format_file, track_file, len, 0);
+      add_to_queue(fn, format_file, track_file, len, 0, queue_cur);
     } else {
-      add_to_queue(fn, format_file, NULL, len, 0);
+      add_to_queue(fn, format_file, NULL, len, 0, queue_cur);
       ck_free(track_file);
     }
 
@@ -735,9 +735,9 @@ u8 save_if_interesting_for_reusing(char** argv, void* mem, u32 len, u8 fault, Ch
     format_file = alloc_printf("%s.json", fn);
     track_file = alloc_printf("%s.track", fn);
     if (track != NULL) {
-      add_to_queue(fn, format_file, track_file, len, 0);
+      add_to_queue(fn, format_file, track_file, len, 0, queue_cur);
     } else {
-      add_to_queue(fn, format_file, NULL, len, 0);
+      add_to_queue(fn, format_file, NULL, len, 0, queue_cur);
       ck_free(track_file);
     }
 

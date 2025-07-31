@@ -234,6 +234,9 @@ struct queue_entry {
   u8* fname; /* File name for the test case      */
   u32 len;   /* Input length                     */
 
+  bool is_seed;
+  struct queue_entry* src_queue;
+
   u8* format_file;   /* Format file name of the test case*/
   u32 format_len;    /* Format file length               */
 
@@ -398,7 +401,7 @@ void mark_as_det_done(struct queue_entry *q);
 void mark_as_variable(struct queue_entry *q);
 void mark_as_redundant(struct queue_entry* q, u8 state);
 void cull_queue(void);
-void add_to_queue(u8* fname, u8* format_file, u8* track_file, u32 len, u8 passed_det);
+void add_to_queue(u8* fname, u8* format_file, u8* track_file, u32 len, u8 passed_det, struct queue_entry* src_queue);
 void destroy_queue(void);
 void sync_fuzzers(char** argv);
 

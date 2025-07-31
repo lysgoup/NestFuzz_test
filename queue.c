@@ -122,8 +122,17 @@ void cull_queue(void) {
 
 /* Append new test case to the queue. */
 
-void add_to_queue(u8* fname, u8* format_file, u8* track_file, u32 len, u8 passed_det) {
+void add_to_queue(u8* fname, u8* format_file, u8* track_file, u32 len, u8 passed_det, struct queue_entry* src_queue) {
   struct queue_entry* q = ck_alloc(sizeof(struct queue_entry));
+
+  q->src_queue = src_queue;
+  if(src_queue != NULL){
+    q->is_seed = false;
+  }
+  else{
+    q->is_seed = true;
+  }
+
 
   /*Need to change*/
   q->fname = fname;

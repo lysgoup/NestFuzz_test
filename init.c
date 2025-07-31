@@ -170,7 +170,7 @@ void read_testcases(void) {
       ck_free(track_file);
       track_file = NULL;
     }
-    add_to_queue(fn, format_file, track_file, st.st_size, passed_det);
+    add_to_queue(fn, format_file, track_file, st.st_size, passed_det, NULL);
   }
 
   free(nl); /* not tracked */

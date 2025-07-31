@@ -622,6 +622,43 @@ Chunk *parse_struture_file(u8 *path) {
 }
 
 Track *parse_constraint_file(u8 *path, u8 *in_buf) {
+  u32 diff_buf_len = queue_cur->len;
+  u8* diff_buf = ck_alloc(diff_buf_len);
+  if(queue_cur->src_queue != NULL){
+    s32 src_fd = open(queue_cur->src_queue->fname, O_RDONLY);
+    if (src_fd < 0) PFATAL("Unable to open src file '%s'", queue_cur->src_queue->fname);
+    u8* src_buf = mmap(0, queue_cur->src_queue->len, PROT_READ | PROT_WRITE, MAP_PRIVATE, src_fd, 0);
+    if (src_buf == MAP_FAILED) {
+      PFATAL("mmap failed for file '%s'", queue_cur->src_queue->fname);
+    }
+    for(int i=0;i<diff_buf_len;i++){
+      if (i >= queue_cur->src_queue->len) {
+        diff_buf[i] = 1;
+      } else {
+        diff_buf[i] = (in_buf[i] == src_buf[i]) ? 0 : 1;
+      }
+    }
+    close(src_fd);
+    munmap(src_buf, queue_cur->src_queue->len);
+  }
+  else{
+    for(int i=0;i<diff_buf_len;i++){
+      diff_buf[i] = 1;
+    }
+  }
+
+  // u8* diff_fn;
+  // s32 diff_fd;
+  // diff_fn = alloc_printf("/NestFuzzer/diff/%s",basename((char *)path));
+  // diff_fd = open(diff_fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
+  // if (diff_fd < 0) PFATAL("Unable to create '%s'", diff_fn);
+  // s32 res = write(diff_fd, diff_buf, diff_buf_len);
+  // if (res != diff_buf_len) {
+  //   PFATAL("Short write to %s (wrote %d of %d bytes)", diff_fn, res, diff_buf_len);
+  // }
+  // ck_free(diff_fn);
+  // close(diff_fd);
+
   cJSON *cjson_head = get_structure_json(path, ".track");
   if (cjson_head == NULL) {
     return NULL;
@@ -700,11 +737,21 @@ Track *parse_constraint_file(u8 *path, u8 *in_buf) {
           track->lengths = length_top = length_chunk;
         }
         track->length_number++;
-        u32 len = length_chunk->end - length_chunk->start;
-        u8 *val = ck_alloc(len);
-        memcpy(val, in_buf + length_chunk->start, len);
-        length_value_set->insert(length_value_set, val, len);
-        ck_free(val);
+        
+        bool is_changed = false;
+        for(int j=length_chunk->start;j<length_chunk->end;j++){
+          if(diff_buf[j] == 1){
+            is_changed = true;
+            break;
+          }
+        }
+        if(is_changed){
+          u32 len = length_chunk->end - length_chunk->start;
+          u8 *val = ck_alloc(len);
+          memcpy(val, in_buf + length_chunk->start, len);
+          length_value_set->insert(length_value_set, val, len);
+          ck_free(val);
+        }
       }
       if (strcmp(type, "offset") == 0) {
         Offset *offset_chunk = ck_alloc(sizeof(struct Offset));
@@ -728,12 +775,22 @@ Track *parse_constraint_file(u8 *path, u8 *in_buf) {
         } else {
           track->offsets = offset_top = offset_chunk;
         }
-        u32 len = offset_chunk->end - offset_chunk->start;
-        u8 *val = ck_alloc(len);
-        memcpy(val, in_buf + offset_chunk->start, len);
-        offset_value_set->insert(offset_value_set, val, len);
-        ck_free(val);
         track->offset_number++;
+
+        bool is_changed = false;
+        for(int j=offset_chunk->start;j<offset_chunk->end;j++){
+          if(diff_buf[j] == 1){
+            is_changed = true;
+            break;
+          }
+        }
+        if(is_changed){
+          u32 len = offset_chunk->end - offset_chunk->start;
+          u8 *val = ck_alloc(len);
+          memcpy(val, in_buf + offset_chunk->start, len);
+          offset_value_set->insert(offset_value_set, val, len);
+          ck_free(val);
+        }
       }
       if (strcmp(type, "constraint") == 0) {
       }
@@ -754,6 +811,7 @@ Track *parse_constraint_file(u8 *path, u8 *in_buf) {
     enum_top = enum_top->next;
   }
   cJSON_Delete(cjson_head);
+  ck_free(diff_buf);
   return track;
 }
 
