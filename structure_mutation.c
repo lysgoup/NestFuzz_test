@@ -1148,9 +1148,6 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
   Offset *offset_iter;
   Constraint *cons_iter;
   u64 orig_hit_cnt, new_hit_cnt;
-  // HashMap map = createHashMap(NULL, NULL);
-  // memcpy(out_buf, buf, len);
-  // tree_add_map(tree->child, map);
   stage_name = "reusing";
   stage_short = "reusing";
   orig_hit_cnt = queued_paths + unique_crashes;
@@ -1243,6 +1240,7 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
     u8* temp_fn = alloc_printf("/NestFuzzer/tmp/queue/%06u_%d", current_entry,i);
     fd = open(temp_fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
     if (fd < 0){
+      PFATAL("test");
       ck_free(temp_fn);
       continue;
     }
@@ -1415,20 +1413,32 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
         //   new_len_value = *(u16 *)cur->data;
         // else if (meta_len == 4)
         //   new_len_value = *(u32 *)cur->data;
-
-        //big endian일 경우에
         u8* p = (u8*)cur->data;
         if (meta_len == 1) {
           new_len_value = p[0];
         } else if (meta_len == 2) {
-          new_len_value = (p[0] << 8) | p[1];
+          new_len_value = (p[1] << 8) | p[0];  // LE: LSB first
         } else if (meta_len == 4) {
-          new_len_value = (p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3];
+          new_len_value = (p[3] << 24) | (p[2] << 16) | (p[1] << 8) | p[0];  // LE
         }
 
-        if ((uint64_t)new_len_value + (uint64_t)out_len >= 1000000000ULL){
-          length_iter = length_iter->next;
-          continue; 
+        //big endian일 경우에
+        // u8* p = (u8*)cur->data;
+        // if (meta_len == 1) {
+        //   new_len_value = p[0];
+        // } else if (meta_len == 2) {
+        //   new_len_value = (p[0] << 8) | p[1];
+        // } else if (meta_len == 4) {
+        //   new_len_value = (p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3];
+        // }
+
+        // FILE *fp_log = fopen("/NestFuzzer/test.txt", "a");
+        // fprintf(fp_log, "new_len_value: %u, out_len: %u, payload_len: %u\n", new_len_value, out_len, payload_len);
+
+        int64_t grow_len = (int64_t)new_len_value - (int64_t)payload_len;
+        if (grow_len + (int64_t)out_len >= 0x40000000ULL || grow_len + (int64_t)out_len <= 0) {
+            length_iter = length_iter->next;
+            continue;
         }
 
         memcpy(out_buf + length_iter->start, cur->data, meta_len);
@@ -1442,14 +1452,16 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
           //   fprintf(fp, "insert\n");
           // }
 
-          uint32_t grow_len = new_len_value - payload_len;
           uint32_t insert_pos = length_iter->target_end;
           if(grow_len >= out_len){
+            // fprintf(fp_log, "out_len: %u, grow_len: %u\n", out_len, grow_len);
+            
             uint32_t copy_start = 0;
             while(grow_len > out_len && out_len != 0){
               uint32_t size = (uint32_t)out_len;
               out_buf = copy_and_insert(out_buf, &out_len, insert_pos, copy_start, size);
               grow_len -= size;
+              // fprintf(fp_log, "out_len: %u, grow_len: %u\n", out_len, grow_len);
             }
             if (grow_len > 0) {
               out_buf = copy_and_insert(out_buf, &out_len, insert_pos, copy_start, grow_len);
@@ -1459,28 +1471,6 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
             uint32_t copy_start = 0;
             out_buf = copy_and_insert(out_buf, &out_len, length_iter->target_end, copy_start, grow_len);
           }
-
-          // // ✅ 안전성 체크: copy_start가 0보다 작아지는 것 방지
-          // if (insert_pos >= grow_len && insert_pos + grow_len <= out_len) {
-          //   u32 copy_start = insert_pos - grow_len;
-          //   if (copy_start + grow_len <= out_len) {
-          //     out_buf = copy_and_insert(out_buf, &out_len, insert_pos,
-          //                               copy_start, grow_len);
-          //   } 
-          //   else {
-          //     // fallback: 일부만 복사
-          //     u32 safe_len = out_len - copy_start;
-          //     if (safe_len > 0) out_buf = copy_and_insert(out_buf, &out_len, insert_pos, copy_start, safe_len);
-          //   }
-          // } 
-          // else {
-          //   // 안전을 위해 뒤쪽 일부만 복사
-          //   u32 max_insert = (insert_pos < len) ? (len - insert_pos) : 0;
-          //   u32 safe_start = (insert_pos >= max_insert) ? (insert_pos - max_insert) : 0;
-          //   if (max_insert > 0) {
-          //     out_buf = copy_and_insert(out_buf, &out_len, insert_pos, safe_start, max_insert);
-          //   }
-          // }
         } 
         else if (new_len_value < payload_len) {
           // if (fp) {
@@ -1493,7 +1483,9 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
             out_buf = delete_data(out_buf, &out_len, delete_start, shrink_len);
           }
         }
-        s32 delta = (s32)new_len_value - (s32)payload_len;
+        // fprintf(fp_log, "-----------------------------------------\n");
+        // fclose(fp_log);
+        int64_t delta = (int64_t)new_len_value - (int64_t)payload_len;
         Length *temp_length_iter = length_iter->next;
         while(temp_length_iter!=NULL){
           //length field의 위치 조정
@@ -1538,6 +1530,7 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
     ck_free(temp_fn);
     ck_free(temp_track_fn);
     ck_free(temp_json_fn);
+    ck_free(temp_buf);
 
     cJSON_Delete(cjson_head);
     free_track(temp_track);
