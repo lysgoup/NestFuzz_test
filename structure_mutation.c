@@ -1136,6 +1136,122 @@ exit_struct_havoc_stage:
   ck_free(out_buf);
 }
 
+
+int replace_count;
+void replace_each_enum_field(u8 *buf, u32 len, Enum *enum_iter){
+   u8 *candi_str;
+  for(int i=0;i<enum_iter->cans_num;i++){
+    u32 last_len = 0, stage_cur_byte;
+    stage_cur_byte = enum_iter->start;
+    candi_str = parse_candidate(enum_iter->candidates[i], &last_len);
+    bool valid = true;
+    if (stage_cur_byte < 0 || stage_cur_byte > len || (stage_cur_byte + last_len) > len) {
+      ck_free(candi_str);
+      valid = false;
+    }
+    if ((enum_iter->end - enum_iter->start) < last_len) {
+      valid = false;
+    }
+    if (enum_iter->start == 0) {
+      valid = false;
+    }
+    if(valid) memcpy(buf + stage_cur_byte, candi_str, last_len);
+
+    if(enum_iter->next == NULL){
+      s32 fd;
+      u8* temp_fn = alloc_printf("/NestFuzzer/tmp/queue/%06u_%d", current_entry,replace_count);
+      replace_count++;
+      fd = open(temp_fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
+      if (fd < 0){
+        // PFATAL("test");
+        ck_free(temp_fn);
+        return;
+      }
+      ck_write(fd, buf, len, temp_fn);
+      close(fd);
+      ck_free(temp_fn);
+      return;
+    }
+    else{
+      replace_each_enum_field(buf, len, enum_iter->next);
+    }
+    ck_free(candi_str);
+  }
+  return;
+}
+
+Enum *deep_copy_enum_chunk(Enum *enum_picked) {
+  size_t size = sizeof(struct Enum) + enum_picked->cans_num * sizeof(uint8_t *);
+  Enum *enum_copy = ck_alloc(size);
+  memcpy(enum_copy, enum_picked, size);  // shallow copy first
+
+  for (size_t i = 0; i < enum_picked->cans_num; i++) {
+      if (enum_picked->candidates[i]) {
+          size_t len = strlen((char *)enum_picked->candidates[i]);  // or known length
+          enum_copy->candidates[i] = ck_alloc(len + 1);
+          memcpy(enum_copy->candidates[i], enum_picked->candidates[i], len + 1);
+      }
+  }
+
+  return enum_copy;
+}
+
+void deep_free_enum_chunk(Enum *enum_obj) {
+    if (!enum_obj) return;
+
+    for (size_t i = 0; i < enum_obj->cans_num; i++) {
+        if (enum_obj->candidates[i]) {
+            ck_free(enum_obj->candidates[i]);
+        }
+    }
+
+    ck_free(enum_obj);
+}
+
+void replace_enum_fields(u8 *buf, u32 len, Track *track){
+  replace_count = 0;
+  if(track->enum_number > 3){
+    uint64_t pick[3];
+    pick[0] = rand() % track->enum_number;
+
+    do {
+        pick[1] = rand() % track->enum_number;
+    } while (pick[1] == pick[0]);
+
+    do {
+        pick[2] = rand() % track->enum_number;
+    } while (pick[2] == pick[0] || pick[2] == pick[1]);
+
+
+    Enum *enum_iter = NULL;
+    Enum *temp_chunk = NULL;
+    for(int j=0;j<3;j++){
+      Enum *enum_picked = track->enums;
+      for(int i=0;i<pick[j];i++){
+        enum_picked = enum_picked->next;
+      }
+      if(enum_picked == NULL) break;
+      Enum *new_enum_chunk = deep_copy_enum_chunk(enum_picked);
+      if(temp_chunk != NULL) temp_chunk->next = new_enum_chunk;
+      else enum_iter = new_enum_chunk;
+
+      temp_chunk = new_enum_chunk;
+      new_enum_chunk->next = NULL;
+    }
+    // // replace_each_enum_field(buf, len, enum_iter);
+    while(enum_iter != NULL){
+      temp_chunk = enum_iter->next;
+      deep_free_enum_chunk(enum_iter);
+      enum_iter = temp_chunk;
+    }
+  }
+  else{
+    Enum *enum_iter = track->enums;
+    replace_each_enum_field(buf, len, enum_iter);
+  }
+ 
+}
+
 void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
   if (track == NULL) {
     return;
@@ -1153,17 +1269,6 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
   orig_hit_cnt = queued_paths + unique_crashes;
   stage_max = 0;
   /* TODO: avoid too much enums */
-  save_enum_number = (save_enum_number + track->enum_number) / 2;
-  if (save_enum_number > 512) {
-    save_enum_number = 512;
-  }
-  if (save_enum_number == 0) {
-    save_enum_number = 100;
-  }
-  u32 enum_threshold = track->enum_number / save_enum_number;
-  if (enum_threshold == 0) {
-    enum_threshold = 1;
-  }
 
   save_length_number = (save_length_number + track->length_number) / 2;
   if (save_length_number > 512) {
@@ -1194,60 +1299,8 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
 
   out_len = len;
   out_buf = ck_alloc(len);
-  for(int i=0;i<max_iteration;i++){
-    memcpy(out_buf, buf, len);
-
-    //enum replacing
-    enum_iter = track->enums;
-    u32 last_len = 0, stage_cur_byte;
-    u8 *candi_str;
-    while (enum_iter != NULL) {
-      if(enum_threshold > 1 && UR(enum_threshold) != 0) {
-        enum_iter = enum_iter->next;
-        continue;
-      }
-
-      //png signature는 replace에서 제외
-      if(enum_iter->start == 0){
-        enum_iter = enum_iter->next;
-        continue;
-      }
-
-      //choose candidate randomly
-      u32 index = UR(enum_iter->cans_num);
-      stage_cur_byte = enum_iter->start;
-      last_len=0;
-      candi_str = parse_candidate(enum_iter->candidates[index], &last_len);
-
-      if (stage_cur_byte < 0 || stage_cur_byte > out_len || (stage_cur_byte + last_len) > out_len) {
-        ck_free(candi_str);
-        enum_iter = enum_iter->next;
-        continue;
-      }
-      if ((enum_iter->end - enum_iter->start) < last_len) {
-        ck_free(candi_str);
-        enum_iter = enum_iter->next;
-        continue;
-      }
-
-      memcpy(out_buf + stage_cur_byte, candi_str, last_len);
-
-      ck_free(candi_str);
-      enum_iter = enum_iter->next;
-    }
-
-    s32 fd;
-    u8* temp_fn = alloc_printf("/NestFuzzer/tmp/queue/%06u_%d", current_entry,i);
-    fd = open(temp_fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
-    if (fd < 0){
-      PFATAL("test");
-      ck_free(temp_fn);
-      continue;
-    }
-    ck_write(fd, out_buf, len, temp_fn);
-    close(fd);
-    ck_free(temp_fn);
-  }
+  memcpy(out_buf, buf, len);
+  replace_enum_fields(out_buf, out_len, track);
   ck_free(out_buf);
 
   DIR *dir;
@@ -1407,30 +1460,24 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
 
         uint32_t new_len_value = 0;
         //little endeian일 경우에
-        // if (meta_len == 1)
-        //   new_len_value = *(u8 *)cur->data;
-        // else if (meta_len == 2)
-        //   new_len_value = *(u16 *)cur->data;
-        // else if (meta_len == 4)
-        //   new_len_value = *(u32 *)cur->data;
-        u8* p = (u8*)cur->data;
-        if (meta_len == 1) {
-          new_len_value = p[0];
-        } else if (meta_len == 2) {
-          new_len_value = (p[1] << 8) | p[0];  // LE: LSB first
-        } else if (meta_len == 4) {
-          new_len_value = (p[3] << 24) | (p[2] << 16) | (p[1] << 8) | p[0];  // LE
-        }
-
-        //big endian일 경우에
         // u8* p = (u8*)cur->data;
         // if (meta_len == 1) {
         //   new_len_value = p[0];
         // } else if (meta_len == 2) {
-        //   new_len_value = (p[0] << 8) | p[1];
+        //   new_len_value = (p[1] << 8) | p[0];  // LE: LSB first
         // } else if (meta_len == 4) {
-        //   new_len_value = (p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3];
+        //   new_len_value = (p[3] << 24) | (p[2] << 16) | (p[1] << 8) | p[0];  // LE
         // }
+
+        //big endian일 경우에
+        u8* p = (u8*)cur->data;
+        if (meta_len == 1) {
+          new_len_value = p[0];
+        } else if (meta_len == 2) {
+          new_len_value = (p[0] << 8) | p[1];
+        } else if (meta_len == 4) {
+          new_len_value = (p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3];
+        }
 
         // FILE *fp_log = fopen("/NestFuzzer/test.txt", "a");
         // fprintf(fp_log, "new_len_value: %u, out_len: %u, payload_len: %u\n", new_len_value, out_len, payload_len);
@@ -1517,8 +1564,27 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
       // while(offset_iter != NULL){
       //   offset_iter = offset_iter->next;
       // }
-    
+      u32 temp_current_erntry;
+      temp_current_erntry = current_entry;
+
+      const char *underscore = strchr(entry->d_name, '_');
+      if (!underscore) {
+        PFATAL("Invalid filename format: %s\n", entry->d_name);
+      }
+
+      // 언더바 앞 부분만 추출하기 위해 길이 계산
+      size_t len = underscore - entry->d_name;
+
+      // 임시 버퍼에 앞 부분 복사
+      char num_buf[16] = {0};  // 16이면 충분 (최대 4,294,967,295는 10자리)
+      strncpy(num_buf, entry->d_name, len);
+      num_buf[len] = '\0';  // null termination
+
+      // 문자열을 정수로 변환
+      current_entry = (u32)strtoul(num_buf, NULL, 10);
+      
       common_fuzz_stuff_for_reusing(argv, out_buf, out_len, tree, track);
+      current_entry = temp_current_erntry;
       ck_free(out_buf);
     }
 
