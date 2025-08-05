@@ -1139,8 +1139,9 @@ exit_struct_havoc_stage:
 
 int replace_count;
 void replace_each_enum_field(u8 *buf, u32 len, Enum *enum_iter){
-   u8 *candi_str;
-  for(int i=0;i<enum_iter->cans_num;i++){
+  u8 *candi_str;
+  if (enum_iter == NULL) return;
+  for(int i=enum_iter->cans_num / 2;i<enum_iter->cans_num;i++){
     u32 last_len = 0, stage_cur_byte;
     stage_cur_byte = enum_iter->start;
     candi_str = parse_candidate(enum_iter->candidates[i], &last_len);
@@ -1163,7 +1164,7 @@ void replace_each_enum_field(u8 *buf, u32 len, Enum *enum_iter){
       replace_count++;
       fd = open(temp_fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
       if (fd < 0){
-        // PFATAL("test");
+        PFATAL("test!!");
         ck_free(temp_fn);
         return;
       }
@@ -1210,8 +1211,8 @@ void deep_free_enum_chunk(Enum *enum_obj) {
 
 void replace_enum_fields(u8 *buf, u32 len, Track *track){
   replace_count = 0;
-  if(track->enum_number > 3){
-    uint64_t pick[3];
+  if(track->enum_number > 4){
+    uint64_t pick[4];
     pick[0] = rand() % track->enum_number;
 
     do {
@@ -1222,10 +1223,14 @@ void replace_enum_fields(u8 *buf, u32 len, Track *track){
         pick[2] = rand() % track->enum_number;
     } while (pick[2] == pick[0] || pick[2] == pick[1]);
 
+    do {
+        pick[3] = rand() % track->enum_number;
+    } while (pick[3] == pick[0] || pick[3] == pick[1] || pick[3] == pick[2]);
+
 
     Enum *enum_iter = NULL;
     Enum *temp_chunk = NULL;
-    for(int j=0;j<3;j++){
+    for(int j=0;j<4;j++){
       Enum *enum_picked = track->enums;
       for(int i=0;i<pick[j];i++){
         enum_picked = enum_picked->next;
@@ -1238,7 +1243,7 @@ void replace_enum_fields(u8 *buf, u32 len, Track *track){
       temp_chunk = new_enum_chunk;
       new_enum_chunk->next = NULL;
     }
-    // // replace_each_enum_field(buf, len, enum_iter);
+    replace_each_enum_field(buf, len, enum_iter);
     while(enum_iter != NULL){
       temp_chunk = enum_iter->next;
       deep_free_enum_chunk(enum_iter);
@@ -1459,25 +1464,25 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
         }
 
         uint32_t new_len_value = 0;
-        //little endeian일 경우에
-        // u8* p = (u8*)cur->data;
-        // if (meta_len == 1) {
-        //   new_len_value = p[0];
-        // } else if (meta_len == 2) {
-        //   new_len_value = (p[1] << 8) | p[0];  // LE: LSB first
-        // } else if (meta_len == 4) {
-        //   new_len_value = (p[3] << 24) | (p[2] << 16) | (p[1] << 8) | p[0];  // LE
-        // }
-
-        //big endian일 경우에
+        // little endeian일 경우에
         u8* p = (u8*)cur->data;
         if (meta_len == 1) {
           new_len_value = p[0];
         } else if (meta_len == 2) {
-          new_len_value = (p[0] << 8) | p[1];
+          new_len_value = (p[1] << 8) | p[0];  // LE: LSB first
         } else if (meta_len == 4) {
-          new_len_value = (p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3];
+          new_len_value = (p[3] << 24) | (p[2] << 16) | (p[1] << 8) | p[0];  // LE
         }
+
+        //big endian일 경우에
+        // u8* p = (u8*)cur->data;
+        // if (meta_len == 1) {
+        //   new_len_value = p[0];
+        // } else if (meta_len == 2) {
+        //   new_len_value = (p[0] << 8) | p[1];
+        // } else if (meta_len == 4) {
+        //   new_len_value = (p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3];
+        // }
 
         // FILE *fp_log = fopen("/NestFuzzer/test.txt", "a");
         // fprintf(fp_log, "new_len_value: %u, out_len: %u, payload_len: %u\n", new_len_value, out_len, payload_len);
@@ -1548,22 +1553,7 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
         }
         length_iter = length_iter->next;
       }
-      // if (fp) {
-      //   fclose(fp);
-      // }
-      // if(temp_track->length_number > 1){
-      //   s32 res = write(length_fd, out_buf, out_len);
-      //   if (res != out_len) {
-      //     PFATAL("Short write to %s (wrote %d of %d bytes)", length_fn, res, out_len);
-      //   }
-      //   close(length_fd);
-      //   ck_free(length_fn);
-      // }
-      
-      // offset_iter = temp_track->offsets;
-      // while(offset_iter != NULL){
-      //   offset_iter = offset_iter->next;
-      // }
+
       u32 temp_current_erntry;
       temp_current_erntry = current_entry;
 
@@ -1583,8 +1573,14 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
       // 문자열을 정수로 변환
       current_entry = (u32)strtoul(num_buf, NULL, 10);
       
-      common_fuzz_stuff_for_reusing(argv, out_buf, out_len, tree, track);
+      common_fuzz_stuff_for_reusing(argv, out_buf, out_len, NULL, NULL);
       current_entry = temp_current_erntry;
+
+      // if(temp_track->length_number > 1){
+      //   write(length_fd, out_buf, out_len);
+      //   ck_free(length_fn);
+      // }
+
       ck_free(out_buf);
     }
 
@@ -1603,6 +1599,7 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
   }
 
   closedir(dir);
+
   // for(int i=0;i<max_iteration;i++){
     /*mutation offset*/
     // offset_iter = track->offsets;
