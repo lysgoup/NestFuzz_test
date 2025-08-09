@@ -1214,7 +1214,7 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
       }
 
       //choose candidate randomly
-      u32 index = UR(enum_iter->cans_num);
+      u32 index = UR(enum_iter->cans_num / 2);
       stage_cur_byte = enum_iter->start;
       last_len=0;
       candi_str = parse_candidate(enum_iter->candidates[index], &last_len);
@@ -1517,8 +1517,27 @@ void reusing_stage(char **argv, u8 *buf, u32 len, Chunk *tree, Track *track){
       // while(offset_iter != NULL){
       //   offset_iter = offset_iter->next;
       // }
-    
-      common_fuzz_stuff_for_reusing(argv, out_buf, out_len, tree, track);
+      u32 temp_current_erntry;
+      temp_current_erntry = current_entry;
+
+      const char *underscore = strchr(entry->d_name, '_');
+      if (!underscore) {
+        PFATAL("Invalid filename format: %s\n", entry->d_name);
+      }
+
+      // 언더바 앞 부분만 추출하기 위해 길이 계산
+      size_t len = underscore - entry->d_name;
+
+      // 임시 버퍼에 앞 부분 복사
+      char num_buf[16] = {0};  // 16이면 충분 (최대 4,294,967,295는 10자리)
+      strncpy(num_buf, entry->d_name, len);
+      num_buf[len] = '\0';  // null termination
+
+      // 문자열을 정수로 변환
+      current_entry = (u32)strtoul(num_buf, NULL, 10);
+      
+      common_fuzz_stuff_for_reusing(argv, out_buf, out_len, NULL, NULL);
+      current_entry = temp_current_erntry;
       ck_free(out_buf);
     }
 
